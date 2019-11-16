@@ -511,9 +511,25 @@ impl FloatLevel {
         }
     }
 
+    fn left_lh(content: &Rect<Pixels>, lh: Pixels) -> Self {
+        FloatLevel {
+            bottom: content.y + content.height + lh,
+            left: content.x + content.width,
+            right: MAX_PIXELS,
+        }
+    }
+
     fn right(content: &Rect<Pixels>) -> Self {
         FloatLevel {
             bottom: content.y + content.height,
+            left: 0.0,
+            right: content.x,
+        }
+    }
+
+    fn right_lh(content: &Rect<Pixels>, lh: Pixels) -> Self {
+        FloatLevel {
+            bottom: content.y + content.height + lh,
             left: 0.0,
             right: content.x,
         }
@@ -534,10 +550,10 @@ impl FloatLevel {
 
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct FloatCursor {
-    block_start: Pixels,
+    pub block_start: Pixels,
     inline: Vec<FloatLevel>,
-    left_block_end: Pixels,
-    right_block_end: Pixels,
+    pub left_block_end: Pixels,
+    pub right_block_end: Pixels,
 }
 
 impl FloatCursor {
@@ -559,6 +575,7 @@ impl FloatCursor {
             FloatDirection::Left => FloatLevel::left(area),
             FloatDirection::Right => FloatLevel::right(area),
         };
+        // println!("advance level: left/{}, right/{}, bottom/{}",level.left, level.right, level.bottom);
         let mut inline: Vec<FloatLevel> = self
             .inline
             .iter()
@@ -582,6 +599,42 @@ impl FloatCursor {
         FloatCursor { block_start, inline, left_block_end, right_block_end }
     }
 
+    fn advance_lh(&self, dir: FloatDirection, area: &Rect<Pixels>, lh: Pixels) -> FloatCursor {
+        let level = match dir {
+            FloatDirection::Left => FloatLevel::left_lh(area,lh),
+            FloatDirection::Right => FloatLevel::right_lh(area,lh),
+        };
+        let mut inline: Vec<FloatLevel> = self
+            .inline
+            .iter()
+            .skip_while(|l| l.bottom < area.y)
+            .cloned()
+            .collect();
+        match inline.binary_search_by(|l| l.order(&level)) {
+            Ok(i) => {
+                inline[i].merge(&level);
+            }
+            Err(i) => {
+                inline.insert(i, level);
+            }
+        }
+        let block_start = area.y;
+        let block_end = area.y + area.height + lh;
+        let (left_block_end, right_block_end) = match dir {
+            FloatDirection::Left => (block_end, self.right_block_end),
+            FloatDirection::Right => (self.left_block_end, block_end),
+        };
+        FloatCursor { block_start, inline, left_block_end, right_block_end }
+    }
+
+    pub fn insert_left_lh(&self, content: &Rect<Pixels>, lh: Pixels) -> FloatCursor {
+        self.advance_lh(FloatDirection::Left, content, lh)
+    }
+
+    pub fn insert_right_lh(&self, content: &Rect<Pixels>, lh: Pixels) -> FloatCursor {
+        self.advance_lh(FloatDirection::Right, content, lh)
+    }
+
     pub fn insert_left(&self, content: &Rect<Pixels>) -> FloatCursor {
         self.advance(FloatDirection::Left, content)
     }
@@ -598,13 +651,17 @@ impl FloatCursor {
         crate::lazy::Lazy::new(self.insert_right(&Rect { x, y, width, height }))
     }
 
+    // ==JUFIX== quick fix for both floats-015 and webkit15662
     pub fn place_left(&self, container: &Rect<Pixels>, width: Pixels) -> (Pixels, Pixels) {
         let mut y = self.block_start.max(container.y);
         let x = container.x;
+        let mut final_x = x;
         for level in &self.inline {
             // Is the proposed left-floating anchor above this layer of
             // floated boxes? If so, it doesn't tell us anything.
-            if level.bottom < y {
+            // if level.bottom < y {
+            // ==JUFIX== floats-015, move to next line even when bottom match
+            if level.bottom <= y {
                 continue;
             }
             // Would this layer of floated boxes force the proposed
@@ -612,31 +669,43 @@ impl FloatCursor {
             // it's container? If so, then we must do better.
             if level.left - x > container.width - width {
                 y = level.bottom; // descend below this layer
+                final_x = x;
                 continue;
             }
-            let x = level.left.max(x);
+            // let x = level.left.max(x);
+            final_x = level.left.max(final_x);
             // Does this layer of floated boxes have enough interior
             // width available to use the proposed left-floating anchor?
             // If so, then we must do better.
             if level.right - x < width {
                 y = level.bottom; // descend below this layer
+                final_x = x;
                 continue;
             }
-            return (x, y);
+
         }
 
         // At this point, we've descended beyond the existing layers of
         // floated boxes.
-        (x, y)
+        (final_x, y)
     }
 
+    // ==JUFIX== quick fix for both floats-015 and webkit15662
     pub fn place_right(&self, container: &Rect<Pixels>, width: Pixels) -> (Pixels, Pixels) {
         let mut y = self.block_start.max(container.y);
         let x = container.x + container.width;
+
+        // println!("proposed x:{}, y:{}, width:{}, container.y:{}",container.x,y,container.width,container.y);
+        // for level in &self.inline {
+        //     println!("level count: left/{}, right/{}, bottom/{}",level.left,level.right,level.bottom);
+        // }
+
+        let mut final_x = x;
         for level in &self.inline {
             // Is the proposed right-floating anchor above this layer of
             // floated boxes? If so, it doesn't tell us anything.
-            if level.bottom < y {
+            // ==JUFIX== floats-015, move to next line even when bottom match
+            if level.bottom <= y {
                 continue;
             }
             // Would this layer of floated boxes force the proposed
@@ -644,28 +713,32 @@ impl FloatCursor {
             // it's container? If so, then we must do better.
             if x - level.right > container.width - width {
                 y = level.bottom; // descend below this layer
+                final_x = x;
                 continue;
             }
-            let x = level.right.min(x);
+            // let x = level.right.min(x);
+            final_x = level.right.min(final_x);
             // Does this layer of floated boxes have enough interior
             // width available to use the proposed right-floating anchor?
             // If so, then we must do better.
             if x - level.left < width {
                 y = level.bottom; // descend below this layer
+                final_x = x;
                 continue;
             }
-            return (x - width, y);
         }
 
         // At this point, we've descended beyond the existing layers of
         // floated boxes.
-        (x - width, y)
+        (final_x - width, y)
     }
 
     pub fn inline_space(&self, inline_start: Pixels, inline_end: Pixels, block_start: Pixels) -> (Pixels, Pixels) {
         if let Some(level) = self.inline.iter().skip_while(|l| l.bottom < block_start).next() {
+            // println!("branch1");
             (inline_start.max(level.left), inline_end.min(level.right))
         } else {
+            // println!("branch2");
             (inline_start, inline_end)
         }
     }

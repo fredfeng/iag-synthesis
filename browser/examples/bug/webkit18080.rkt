@@ -1,4 +1,4 @@
-;; From file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/webkit18080.html
+;; From file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/webkit18080.html
 
 (define-stylesheet doc-1
   ((id A)
@@ -35,7 +35,7 @@
 (define-fonts doc-1
   [16 "serif" 400 normal 12 4 0 0 19.2])
 
-(define-layout (doc-1 :matched true :w 1280 :h 703 :fs 16 :scrollw 0)
+(define-layout (doc-1 :matched true :w 1280 :h 663 :fs 16 :scrollw 0)
  ([VIEW :w 1280]
   ([BLOCK :x 0 :y 0 :w 1280 :h 52 :elt 0]
    ([BLOCK :x 8 :y 8 :w 1264 :h 36 :elt 3]
@@ -54,7 +54,7 @@
 
 (define-problem doc-1
   :title ""
-  :url "file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/webkit18080.html"
+  :url "file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/webkit18080.html"
   :sheets firefox doc-1
   :fonts doc-1
   :documents doc-1

@@ -1,83 +1,33 @@
-;; From file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/chrome665804.html
+;; From file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/chrome665804.html
 
 (define-stylesheet doc-1
-  ((tag div)
+  ((id container)
    [width (px 100)])
   ((id s1)
    [display inline-block]
    [width (px 40)]
-   [height (px 10)])
+   [height (px 10)]
+   [background-color green])
   ((id d1)
    [float left]
    [width (px 40)]
-   [height (px 40)])
+   [height (px 40)]
+   [background-color yellow])
   ((id d2)
    [float left]
    [width (px 100)]
    [height (px 100)]
-   [background-color blue]
-   #;[background-position-x (% 0)]
-   #;[background-position-y (% 0)]
-   #;[background-repeat repeat]
-   #;[background-attachment scroll]
-   #;[background-image none]
-   #;[background-size auto]
-   #;[background-origin padding-box]
-   #;[background-clip border-box])
+   [background-color blue])
   ((id d3)
    [float left]
    [width (px 40)]
    [height (px 40)]
-   [background-color hotpink]
-   #;[background-position-x (% 0)]
-   #;[background-position-y (% 0)]
-   #;[background-repeat repeat]
-   #;[background-attachment scroll]
-   #;[background-image none]
-   #;[background-size auto]
-   #;[background-origin padding-box]
-   #;[background-clip border-box])
-  ((id edoc-10001) :style
-   [width (px 100)])
-  ((id s1) :style
-   [display inline-block]
-   [width (px 40)]
-   [height (px 10)])
-  ((id d1) :style
-   [float left]
-   [width (px 40)]
-   [height (px 40)])
-  ((id d2) :style
-   [float left]
-   [width (px 100)]
-   [height (px 100)]
-   [background-color blue]
-   #;[background-position-x (% 0)]
-   #;[background-position-y (% 0)]
-   #;[background-repeat repeat]
-   #;[background-attachment scroll]
-   #;[background-image none]
-   #;[background-size auto]
-   #;[background-origin padding-box]
-   #;[background-clip border-box])
-  ((id d3) :style
-   [float left]
-   [width (px 40)]
-   [height (px 40)]
-   [background-color hotpink]
-   #;[background-position-x (% 0)]
-   #;[background-position-y (% 0)]
-   #;[background-repeat repeat]
-   #;[background-attachment scroll]
-   #;[background-image none]
-   #;[background-size auto]
-   #;[background-origin padding-box]
-   #;[background-clip border-box]))
+   [background-color hotpink]))
 
 (define-fonts doc-1
   [16 "serif" 400 normal 12 4 0 0 19.2])
 
-(define-layout (doc-1 :matched true :w 1280 :h 703 :fs 16 :scrollw 0)
+(define-layout (doc-1 :matched true :w 1280 :h 663 :fs 16 :scrollw 0)
  ([VIEW :w 1280]
   ([BLOCK :x 0 :y 0 :w 1280 :h 188 :elt 0]
    ([BLOCK :x 8 :y 8 :w 1264 :h 19.2 :elt 4]
@@ -95,15 +45,15 @@
     ([link :num 2])
     ([title :num 3]))
    ([body :num 4]
-    ([div :num 5 :id edoc-10001]
-     ([span :num 6 :id s1])
-     ([div :num 7 :id d1])
-     ([div :num 8 :id d2])
-     ([div :num 9 :id d3])))))
+    ([div :num 5 :id container]
+     ([span :num 6 :id s1]) " "
+     ([div :num 7 :id d1]) " "
+     ([div :num 8 :id d2]) " "
+     ([div :num 9 :id d3])) " ")))
 
 (define-problem doc-1
   :title "JS Bin"
-  :url "file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/chrome665804.html"
+  :url "file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/chrome665804.html"
   :sheets firefox doc-1
   :fonts doc-1
   :documents doc-1

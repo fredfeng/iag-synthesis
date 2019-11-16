@@ -7,7 +7,7 @@ body {
     height: 40px;
     width: 400px;
     top: 40px;
-    left: 50%;
+    left: 727.5px;
     margin-left: -300px;
     position: absolute;
     padding-top: 0px;
@@ -17,6 +17,8 @@ body {
 }
 
 .red {
+    width: 8px;
+    height: 19.2px;
     background-color: red;
     position: absolute;
     right: 0px;

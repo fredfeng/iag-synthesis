@@ -9,6 +9,7 @@ div
     height: 32px;
     margin-top: 32px;
     overflow: hidden;
+    background: blue;
 }
 #div2
 {

@@ -1,4 +1,4 @@
-;; From file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/margin.html
+;; From file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/margin.html
 
 (define-stylesheet doc-1
   (*
@@ -52,7 +52,7 @@
 (define-fonts doc-1
   [16 "serif" 400 normal 12 4 0 0 19.2])
 
-(define-layout (doc-1 :matched true :w 1280 :h 703 :fs 16 :scrollw 0)
+(define-layout (doc-1 :matched true :w 1280 :h 663 :fs 16 :scrollw 0)
  ([VIEW :w 1280]
   ([BLOCK :x 330 :y 0 :w 620 :h 229 :elt 0]
    ([BLOCK :x 340 :y 10 :w 600 :h 87 :elt 3]
@@ -71,7 +71,7 @@
 
 (define-problem doc-1
   :title ""
-  :url "file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/margin.html"
+  :url "file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/margin.html"
   :sheets firefox doc-1
   :fonts doc-1
   :documents doc-1

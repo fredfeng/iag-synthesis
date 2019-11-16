@@ -1,21 +1,4 @@
-/*
-main {
-    height: 300px;
-    width: 250px;
-    background-image: blue;
-    overflow: scroll;
-}
-
-div {
-    margin-top: 200px;
-    height: 200px;
-    width: 200px;
-    overflow: scroll;
-}
-
 p {
-    height: 250px;
-    background-image: white;
-    margin: 0px;
+    margin-top: 16px;
+    margin-bottom: 16px;
 }
-*/

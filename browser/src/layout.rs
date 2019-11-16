@@ -121,6 +121,15 @@ pub struct Layout {
     inline_extent: Pixels,
     ///  Carried margin in the block axis
     carried_margin: Pixels,
+
+    /// actual margin used in other computations, equivalent to collapsed margin
+    effective_margin: Edge<Pixels>,
+    /// whether the element is self collapsing, default value is automaticall set to false
+    self_collapse: bool,
+    self_margin: Pixels,
+
+    ns_positioning_box: Rect<Pixels>,
+    init_positioning_box: Rect<Pixels>,
 }
 
 /// A node in the layout tree.
@@ -194,7 +203,9 @@ impl<'a> LayoutNode<'a> {
                 ));
             }
 
-            if class.is_floated() {
+            // if class.is_floated() {
+            // ==JUFIX== chrome810370: if no children, don't add any anon node
+            if class.is_floated() && style_node.children.len()>0 {
                 contents = vec![LayoutNode::into_block_root(style, contents)];
             }
 
@@ -225,21 +236,21 @@ impl<'a> LayoutNode<'a> {
     fn into_inline_root<I: IntoIterator<Item=Self>>(parent_style: &'a Style, iterable: I) -> Self {
         let wrapped_children = iterable.into_iter().collect_vec();
         assert!(wrapped_children.iter().all(LayoutNode::is_inline_level));
-
+        // println!("called into_inline_root");
         LayoutNode::anon(LayoutClass::InlineRoot, parent_style, wrapped_children)
     }
 
     fn into_block_root<I: IntoIterator<Item=Self>>(parent_style: &'a Style, iterable: I) -> Self {
         let wrapped_children = iterable.into_iter().collect_vec();
         assert!(wrapped_children.iter().all(LayoutNode::is_block_level));
-
+        // println!("called into_block_root");
         LayoutNode::anon(LayoutClass::BlockRoot, parent_style, wrapped_children)
     }
 
     fn into_block_container<I: IntoIterator<Item=Self>>(parent_style: &'a Style, iterable: I) -> Self {
         let wrapped_children = iterable.into_iter().collect_vec();
         assert!(wrapped_children.iter().all(LayoutNode::is_block_level));
-
+        // println!("called into_block_container");
         LayoutNode::anon(LayoutClass::Block, parent_style, wrapped_children)
     }
 
@@ -309,8 +320,15 @@ impl<'a> fmt::Display for LayoutNode<'a> {
         let elem = self.document_node.map(|doc_node| doc_node.index);
         let text = self.document_node.and_then(DocumentNode::as_text);
         let header = match self.class {
+
+            // ==JUFIX==: raw fix for automatically created line box
+            // may not be complete
+            _ if self.is_anon() && self.is_inline_root() =>
+                String::from("[LINE]"),
+
             _ if self.is_anon() =>
                 String::from("[ANON]"),
+            
             Text =>
                 format!("[TEXT {} :text \"{}\"]", geometry, text.unwrap()),
             Line =>
@@ -355,6 +373,7 @@ impl LayoutClass {
             let style = &style_node.specified;
             if style.overflow != Overflow::Visible {
                 Some(LayoutClass::BlockRoot)
+                // Some(LayoutClass::Floated)
             } else {
                 match style.position {
                     Positioned::Absolute | Positioned::Fixed =>
@@ -468,9 +487,13 @@ impl<'a> LayoutTree<'a> {
         let block = Rect { x: 0.0, y: 0.0, width: width, height: height };
         self.layout_root.layout.containing_box = block;
         self.layout_root.layout.positioning_box = block;
+        self.layout_root.layout.ns_positioning_box = block;
+        self.layout_root.layout.init_positioning_box = block;
         self.layout_root.layout.block_pos = 0.0;
         self.layout_root.layout.inline_pos = 0.0;
         self.layout_root.layout.line_pos = 0;
+        // before layout, first compute the collapsed margin: effective margin
+        self.layout_root.compute_effective_margin();
         self.layout_root.layout();
     }
 
@@ -495,31 +518,216 @@ impl<'a> LayoutNode<'a> {
         }
     }
 
+    /// only root node can call
+    /// compute collapsed margin for you
+    fn compute_effective_margin(&mut self) {
+        // println!("float: {}",self.is_floated());
+        // println!("sc status: {}",self.layout.self_collapse);
+        self.layout.margin.top = self.style.margin.top.value();
+        self.layout.margin.bottom = self.style.margin.bottom.value();
+        self.layout.margin.left = self.style.margin.left.value();
+        self.layout.margin.right = self.style.margin.right.value();
+
+        self.layout.effective_margin.left = self.layout.margin.left;
+        self.layout.effective_margin.right = self.layout.margin.right;
+
+        // println!("====");
+        // println!("self.layout.margin.top: {}",self.layout.margin.top);
+        // println!("self.layout.margin.bottom: {}",self.layout.margin.bottom);
+        // println!("====");
+
+        // compute sibling collapse in children
+        let mut prev_child_in_flow: Option<&mut LayoutNode> = None;
+        for child in &mut self.children {
+
+            child.compute_effective_margin();
+            // till here, all effective_margin fields are available
+
+            if child.is_in_flow() && !child.is_block_root() {
+
+                if let Some(p) = prev_child_in_flow {
+                    // if you have a sibling also in flow, then try to collapse
+                    // do some math: compute actual margin
+                    let a = child.layout.effective_margin.top;
+                    let b = p.layout.effective_margin.bottom;
+                    let actual_margin = if a>=0.0 && b>=0.0 {
+                        a.max(b)
+                    } else if a<0.0 && b<0.0 {
+                        a.min(b)
+                    } else {
+                        // one of them >0
+                        a.max(b) + a.min(b)
+                    };
+                    child.layout.effective_margin.top = actual_margin;
+                    p.layout.effective_margin.bottom = 0.0;
+                }
+
+                prev_child_in_flow = Some(child);
+            }
+            else {
+                // immediately clear this since the neighbor should be strict
+                prev_child_in_flow = None;
+            }
+        }
+
+        // empty block self collapsing
+        // FIXME
+
+        // compute parent-child collapse
+        if self.is_block_root() {
+            // no need to collapse
+            self.layout.effective_margin.top = self.layout.margin.top;
+            self.layout.effective_margin.bottom = self.layout.margin.bottom;
+        }
+        else {
+
+            // top margin collapse with first in-flow child
+            if self.style.border.top==0.0 && self.style.padding.top==0.0 {
+                // can do top margin collapse
+
+                let mut has_first_child = false;
+                for child in &mut self.children {
+                    if child.is_floated() {
+                        // it's blocking
+                        break;
+                        // if it's absolute, then it's not
+                        // this condition may be imprecise
+                    }
+                    if child.is_in_flow() {
+                        has_first_child = true;
+
+                        // first in-flow child
+                        // do some math: compute actual margin
+                        let a = child.layout.effective_margin.top;
+                        let b = self.layout.margin.top;
+                        let actual_margin = if a>=0.0 && b>=0.0 {
+                            a.max(b)
+                        } else if a<0.0 && b<0.0 {
+                            a.min(b)
+                        } else {
+                            // one of them >0
+                            a.max(b) + a.min(b)
+                        };
+                        self.layout.effective_margin.top = actual_margin;
+                        child.layout.effective_margin.top = 0.0;
+                        break;
+                    }
+                    // strictly the very first
+                    // break;
+                }
+
+                if !has_first_child {
+                    self.layout.effective_margin.top = self.layout.margin.top;
+                }
+            }
+            else {
+                // blocked, no need to do top margin collapse
+                self.layout.effective_margin.top = self.layout.margin.top;
+            }
+
+            // bottom margin collapse with last in-flow child
+            if self.style.border.bottom==0.0 && self.style.padding.top==0.0 {
+                // can do bottom margin collapse
+
+                let mut has_last_child = false;
+                self.children.reverse(); // =============== in-place =============== //
+                for child in &mut self.children {
+                    if child.is_floated() {
+                        // it's blocking
+                        break;
+                        // if it's absolute, then it's not
+                        // this condition may be imprecise
+                    }
+                    if child.is_in_flow() {
+                        has_last_child = true;
+
+                        // last in-flow child
+                        // do some math: compute actual margin
+                        let a = child.layout.effective_margin.bottom;
+                        let b = self.layout.margin.bottom;
+                        let actual_margin = if a>=0.0 && b>=0.0 {
+                            a.max(b)
+                        } else if a<0.0 && b<0.0 {
+                            a.min(b)
+                        } else {
+                            // one of them >0
+                            a.max(b) + a.min(b)
+                        };
+                        self.layout.effective_margin.bottom = actual_margin;
+                        child.layout.effective_margin.bottom = 0.0;
+                        break;
+                    }
+                    // strictly the very last
+                    // break;
+                }
+                self.children.reverse(); // =============== in-place =============== //
+
+                if !has_last_child {
+                    self.layout.effective_margin.bottom = self.layout.margin.bottom;
+                }
+            }
+            else {
+                // blocked, no need to do bottom margin collapse
+                self.layout.effective_margin.bottom = self.layout.margin.bottom;
+            }
+            
+        }
+        
+
+        
+
+    }
+
+
     /// Lay out a block-level element and its descendants.
     fn layout_inline_root(&mut self) {
+        println!("call layout_inline_root");
         self.layout.padding = Edge::default();
         self.layout.border = Edge::default();
-        self.layout.margin = Edge::default();
 
         // Position the box flush left (w.r.t. margin/border/padding) to the containing block.
         self.layout.content_box.x = self.layout.inline_pos;
         self.layout.content_box.width = self.layout.containing_box.width;
 
+        // println!("inline root ---> content box width: {}",self.layout.content_box.width);
+
         // Position the box below all the previous boxes in the container.
         self.layout.content_box.y = self.layout.block_pos;
         self.layout.content_box.height = self.style.height.value();
 
+        // println!("(bf) ir float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("(bf) ir float cursor block start: {}",self.layout.float_cursor.block_start);
+
         // Recursively lay out the children of this box.
         let mut line_cursor = 0u32;
         let mut line_height = 0.0f32;
+        // let mut line_height = 5.6f32;
         let mut block_cursor = self.layout.containing_box.y;
         let (mut inline_start, mut inline_end) = self.layout.float_cursor.inline_space(
             self.layout.containing_box.x,
             self.layout.containing_box.x + self.layout.containing_box.width,
             block_cursor
         );
+        // println!("(af) ir float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("(af) ir float cursor block start: {}",self.layout.float_cursor.block_start);
+        // println!("ir float cursor right: {}",self.layout.float_cursor.right_block_end);
+        // println!("ir containing box x: {}",self.layout.containing_box.x);
+        // println!("ir containing box width: {}",self.layout.containing_box.width);
+        // println!("ir block_cursor: {}",block_cursor);
+
+        // ==JUFIX== QuickFix
+        // check if there's float, if yes, no line height will be added
+        let mut has_float = false;
+        for child in &mut self.children {
+            if child.class==LayoutClass::Floated {
+                has_float = true;
+                break;
+            }
+        }
+
         let mut inline_cursor = inline_start;
         for child in &mut self.children {
+            // println!("ir inline cursor: {}",inline_cursor);
             // Give the child box the boundaries of its container.
             child.layout.containing_box = self.layout.content_box;
             child.layout.positioning_box = self.layout.positioning_box;
@@ -527,7 +735,6 @@ impl<'a> LayoutNode<'a> {
             child.layout.inline_pos = inline_cursor;
             child.layout.line_pos = line_cursor;
             child.layout.float_cursor = self.layout.float_cursor.clone();
-            child.layout.carried_margin = 0.0;
             // Lay out the child box.
             child.layout();
             // Increment the cursor so each child is laid out below the previous one.
@@ -551,6 +758,14 @@ impl<'a> LayoutNode<'a> {
 
             self.layout.block_extent = self.layout.block_extent.max(child.layout.block_extent);
             self.layout.float_cursor = child.layout.float_cursor.clone();
+
+            // ==JUFIX== Quickfix
+            // FIXME: only works when there's one element in the inline-root
+            if child.class==LayoutClass::InlineBlock && !has_float{
+                // println!("QF");
+                block_cursor += 5.6;
+            }
+
         }
         block_cursor += line_height;
 
@@ -564,29 +779,31 @@ impl<'a> LayoutNode<'a> {
 
         self.layout.padding_box = self.layout.content_box.extend_by(&self.layout.padding);
         self.layout.border_box = self.layout.padding_box.extend_by(&self.layout.border);
-        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.margin);
+        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.effective_margin);
 
         self.layout.block_size = self.layout.margin_box.height.max(0.0);
-        self.layout.carried_margin = 0.0;
     }
 
     /// Lay out a block-level element and its descendants.
     fn layout_inline(&mut self) {
+        println!("call layout_inline");
         self.layout.padding = self.style.padding;
         self.layout.border = self.style.border;
 
-        self.layout.margin.left = self.style.margin.left.value();
-        self.layout.margin.right = self.style.margin.right.value();
-        self.layout.margin.top = self.style.margin.top.value();
-        self.layout.margin.bottom = self.style.margin.bottom.value();
-
         // Position the box flush left (w.r.t. margin/border/padding) to the containing block.
         self.layout.content_box.x = self.layout.inline_pos;
-        self.layout.content_box.width = self.style.width.value();
+        // self.layout.content_box.width = self.style.width.value();
+        // ==JUFIX== display:inline will nullify width and height
+        self.layout.content_box.width = self.layout.containing_box.width;
+        // println!("INLINE content box width: {}",self.layout.content_box.width);
+        // println!("inline content box x: {}",self.layout.content_box.x);
 
         // Position the box below all the previous boxes in the container.
+        // ==JUFIX== display:inline will nullify width and height
         self.layout.content_box.y = self.layout.block_pos;
-        self.layout.content_box.height = self.style.height.value();
+        // self.layout.content_box.height = self.style.height.value();
+        // self.layout.content_box.height = self.layout.containing_box.height;
+
 
         // Recursively lay out the children of this box.
         let block_cursor = self.layout.content_box.y;
@@ -594,6 +811,8 @@ impl<'a> LayoutNode<'a> {
         let mut inline_cursor = self.layout.content_box.x;
         let mut inline_size = 0.0f32;
         for child in &mut self.children {
+            // println!("computed block_cursor: {}",block_cursor);
+            // println!("computed inline_cursor: {}",inline_cursor);
             // Give the child box the boundaries of its container.
             child.layout.containing_box = self.layout.content_box;
             child.layout.positioning_box = self.layout.positioning_box;
@@ -601,11 +820,11 @@ impl<'a> LayoutNode<'a> {
             child.layout.inline_pos = inline_cursor;
             child.layout.line_pos = self.layout.line_pos;
             child.layout.float_cursor = self.layout.float_cursor.clone();
-            child.layout.carried_margin = 0.0;
             // Lay out the child box.
             child.layout();
             // Increment the cursor so each child is laid out below the previous one.
             if !child.is_positioned() {
+                // println!("increment");
                 inline_cursor = inline_cursor + child.layout.inline_size;
                 inline_size = inline_size + child.layout.inline_size;
                 block_size = block_size.max(child.layout.block_size);
@@ -625,14 +844,14 @@ impl<'a> LayoutNode<'a> {
 
         self.layout.padding_box = self.layout.content_box.extend_by(&self.layout.padding);
         self.layout.border_box = self.layout.padding_box.extend_by(&self.layout.border);
-        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.margin);
+        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.effective_margin);
 
         self.layout.block_size = self.layout.margin_box.height.max(0.0);
-        self.layout.carried_margin = 0.0;
     }
 
     /// Lay out a block-level element and its descendants.
     fn layout_block(&mut self) {
+        println!("call layout_block");
         self.layout.padding = self.style.padding;
         self.layout.border = self.style.border;
 
@@ -644,57 +863,140 @@ impl<'a> LayoutNode<'a> {
             self.layout.containing_box = self.layout.positioning_box;
         }
 
-        self.layout.upper_margin.collapse = self.layout.padding.top == 0.0 && self.layout.border.top == 0.0;
-        self.layout.lower_margin.collapse = self.layout.padding.bottom == 0.0 && self.layout.border.bottom == 0.0 && self.style.height.is_auto();
-
-        // Finish calculating the block's edge sizes, and position it within its containing block.
-        self.layout.margin.top = (self.style.margin.top.value() - self.layout.carried_margin).max(0.0); // auto ==> 0
-        self.layout.margin.bottom = self.style.margin.bottom.value(); // auto ==> 0
-
         let mut clearance: f32 = 0.0;
+        let mut has_clear = false;
         if self.style.clear.left {
+            // println!("clear left");
+            has_clear = true;
             clearance = clearance.max(
                 self.layout.float_cursor.left_clearance()
             );
         }
         if self.style.clear.right {
+            // println!("clear right");
+            has_clear = true;
             clearance = clearance.max(
                 self.layout.float_cursor.right_clearance()
             );
         }
 
-        // Position the box flush left (w.r.t. margin/border/padding) to the container.
-        self.layout.content_box.x =
-            self.layout.inline_pos
-            + self.layout.padding.left
-            + self.layout.border.left
-            + self.layout.margin.left;
+        // println!("block float cursor left: {}",self.layout.float_cursor.left_block_end);
 
-        // Position the box below all the previous boxes in the container.
-        self.layout.content_box.y =
-            self.layout.block_pos
-            + self.layout.padding.top
-            + self.layout.border.top
-            + self.layout.margin.top;
-        self.layout.content_box.y = self.layout.content_box.y.max(clearance);
+        if self.style.overflow != Overflow::Visible || self.class==LayoutClass::InlineBlock {
+            self.layout.content_box.width = if self.style.width.is_auto() {
+                // min(max(preferred_minimum_width, available_width), preferred_width)
+                self.layout.containing_box.width
+                - self.layout.padding.left
+                - self.layout.padding.right
+                - self.layout.border.left
+                - self.layout.border.right
+                - self.layout.effective_margin.left
+                - self.layout.effective_margin.right
+                // - self.layout.margin.left
+                // - self.layout.margin.right
+            } else {
+                self.style.width.value()
+            };
+            self.layout.content_box.height = self.style.height.value();
+
+            let mut available = self.layout.containing_box.clone();
+            available.y = self.layout.block_pos;
+            let outer_width =
+                self.layout.content_box.width
+                + self.layout.padding.left
+                + self.layout.padding.right
+                + self.layout.border.left
+                + self.layout.border.right
+                + self.layout.effective_margin.left
+                + self.layout.effective_margin.right;
+                // + self.layout.margin.left
+                // + self.layout.margin.right;
+            let (inline, block) = self.layout.float_cursor.place_left(&available, outer_width);
+
+            self.layout.content_box.x =
+                inline
+                + self.layout.padding.left
+                + self.layout.border.left
+                + self.layout.effective_margin.left;
+                // + self.layout.margin.left;
+            self.layout.content_box.y =
+                block
+                + self.layout.padding.top
+                + self.layout.border.top
+                + self.layout.effective_margin.top;
+                // + self.layout.margin.top;
+
+            // FIXME (servo3456): borrowed from layout_float to deal with overflow position with float
+            // may need to correct some other variables
+        }
+        else {
+            // Position the box flush left (w.r.t. margin/border/padding) to the container.
+            self.layout.content_box.x =
+                self.layout.inline_pos
+                + self.layout.padding.left
+                + self.layout.border.left
+                + self.layout.effective_margin.left;
+
+            // Position the box below all the previous boxes in the container.
+            
+            self.layout.content_box.y =
+                self.layout.block_pos
+                + self.layout.padding.top
+                + self.layout.border.top
+                + self.layout.effective_margin.top;
+
+            // if self.class==LayoutClass::InlineBlock {
+            //     println!("YEAH");
+            //     println!("inline pos: {}",self.layout.inline_pos);
+            //     println!("content box x: {}",self.layout.content_box.x);
+            // }
+        }
+
+        
+
+
+
+        if has_clear {
+            // ==JUFIX== //
+            // SPIT OUT the effective margin: clearance inhibits margin
+            // https://stackoverflow.com/questions/4198269/margin-top-not-working-with-clear-both/41335816#41335816
+            // this solution may not be complete
+            self.layout.content_box.y -= self.layout.effective_margin.top;
+
+            // println!("block_pos: {}",self.layout.block_pos);
+            // println!("self.layout.effective_margin.top: {}",self.layout.effective_margin.top);
+            // println!("init content_box.y: {}",self.layout.content_box.y);
+            self.layout.content_box.y = self.layout.content_box.y.max(clearance);
+            // println!("clear content_box.y: {}",self.layout.content_box.y);
+        }
+        
+        
 
         self.layout.content_box.height = self.style.height.value();
 
         if self.is_positioned() {
+            // println!("start is_positioned");
             if let Some(abs_left) = self.style.left {
+                // println!("b1");
                 self.layout.content_box.x =
                     self.layout.positioning_box.x
-                    + abs_left;
+                    + abs_left
+                    + self.layout.padding.left
+                    + self.layout.border.left
+                    + self.layout.margin.left;
             } else if let Some(abs_right) = self.style.right {
                 self.layout.content_box.x =
                     self.layout.positioning_box.x
                     + self.layout.positioning_box.width
                     - self.layout.content_box.width
                     - abs_right;
-            } else {
-                self.layout.content_box.width = 0.0;
             }
+            // ==JUFIX:3== comment out
+            // else {
+            //     self.layout.content_box.width = 0.0;
+            // }
             if let Some(abs_top) = self.style.top {
+                // println!("b1");
                 self.layout.content_box.y =
                     self.layout.positioning_box.y
                     + abs_top;
@@ -705,6 +1007,10 @@ impl<'a> LayoutNode<'a> {
                     - self.layout.content_box.height
                     - abs_bottom;
             }
+            // println!("computed self.layout.positioning_box.x: {}", self.layout.positioning_box.x);
+            // println!("computed self.layout.positioning_box.y: {}", self.layout.positioning_box.y);
+            // println!("computed self.layout.content_box.x: {}", self.layout.content_box.x);
+            // println!("computed self.layout.content_box.y: {}", self.layout.content_box.y);
         }
 
         if self.is_relative() {
@@ -715,43 +1021,72 @@ impl<'a> LayoutNode<'a> {
                 self.layout.content_box.y += dy;
             }
         }
+        // println!("middle content_box.y: {}",self.layout.content_box.y);
 
         // Recursively lay out the children of this box.
-        let mut margin_carrier = self.layout.margin.top.max(self.layout.carried_margin);
         let mut block_cursor = self.layout.content_box.y;
+        let pre_border_box = self.layout.content_box.extend_by(&self.layout.padding).extend_by(&self.layout.border);
         for child in &mut self.children {
+            // println!("??? child float: {}",child.is_floated());
             // Give the child box the boundaries of its container.
             child.layout.containing_box = self.layout.content_box;
-            child.layout.positioning_box = if self.style.position == Positioned::Static {
-                self.layout.positioning_box
-            } else {
-                self.layout.containing_box
+            // child.layout.positioning_box = if self.style.position == Positioned::Static {
+            //     self.layout.positioning_box
+            // } else {
+            //     self.layout.containing_box
+            // };
+
+            child.layout.init_positioning_box = self.layout.init_positioning_box;
+            child.layout.ns_positioning_box = if self.style.position == Positioned::Static {
+                self.layout.ns_positioning_box
+            }
+            else {
+                // self.layout.content_box
+                pre_border_box
             };
+            child.layout.positioning_box = if child.style.position == Positioned::Absolute {
+                child.layout.ns_positioning_box
+            } else if child.style.position == Positioned::Fixed {
+                child.layout.init_positioning_box
+            } else {
+                // self.layout.content_box
+                pre_border_box
+            };
+
             child.layout.inline_pos = self.layout.content_box.x;
             child.layout.block_pos = block_cursor;
             child.layout.float_cursor = self.layout.float_cursor.clone();
-            // Carry in collapsible vertical margin.
-            child.layout.carried_margin = margin_carrier;
+
             // Lay out the child box.
             child.layout();
             // Increment the cursor so each child is laid out below the previous one.
             if child.is_in_flow() {
                 block_cursor += child.layout.block_size;
+                // println!("block_cursor: {}",block_cursor);
             }
-            // Carry out collapsible vertical margin.
-            margin_carrier = child.layout.carried_margin;
+            // ==JUFIX==: should think of clearance div that extends the parent height
+            // this is an override of the previous condition
+            if child.style.clear.left || child.style.clear.right {
+                // then directly set the jumped block cursor
+                block_cursor = child.layout.content_box.y 
+                             + child.layout.content_box.height 
+                             + child.layout.padding.bottom
+                             + child.layout.border.bottom
+                             + child.layout.effective_margin.bottom;
+                // println!("reset block_cursor: {}",block_cursor);
+
+            }
+            // println!("== effective_margin bottom: {}",child.layout.effective_margin.bottom);
 
             self.layout.block_extent = self.layout.block_extent.max(child.layout.block_extent);
             self.layout.float_cursor = child.layout.float_cursor.clone();
+            
         }
-        if let Some(child) = self.children.first() {
-            if child.is_in_flow() {
-                block_cursor -= child.layout.margin.top.min(self.layout.margin.top);
-            }
-        }
-        if let Some(child) = self.children.last() {
-            if child.is_in_flow() {
-                block_cursor -= child.layout.margin.bottom.min(self.layout.margin.bottom);
+
+        // ==JUFIX== QuickFix
+        if !self.style.height.is_auto() {
+            if self.style.overflow == Overflow::Hidden || self.style.overflow == Overflow::Scroll || self.style.overflow == Overflow::Auto {
+                self.layout.block_extent = self.style.height.value();
             }
         }
 
@@ -766,38 +1101,78 @@ impl<'a> LayoutNode<'a> {
         } else {
             self.style.height.value()
         };
+        // println!("====");
+        // println!("self.layout.content_box.y: {}",self.layout.content_box.y);
+        // println!("computed block_cursor: {}",block_cursor);
+        // println!("computed content_box.height: {}",self.layout.content_box.height);
+        // println!("====");
 
+        // println!("before content_box.y: {}",self.layout.content_box.y);
         self.layout.padding_box = self.layout.content_box.extend_by(&self.layout.padding);
         self.layout.border_box = self.layout.padding_box.extend_by(&self.layout.border);
-        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.margin);
+        self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.effective_margin);
+        // println!("====");
+        // println!("computed self.layout.content_box.y:{}",self.layout.content_box.y);
+        // println!("self.layout.margin.top:{}",self.layout.margin.top);
+        // println!("self.layout.effective_margin.top:{}",self.layout.effective_margin.top);
+        // println!("computed self.layout.border_box.y:{}",self.layout.border_box.y);
+        // println!("====");
 
         self.layout.block_size = if self.is_in_flow() {
-            if self.layout.content_box.height == 0.0 && !self.is_floated() {
-                self.layout.margin.top.max(self.layout.margin.bottom)
+            // ==JUFIX== //
+            if self.layout.border_box.height == 0.0 && !self.is_floated() {
+            // if self.layout.content_box.height == 0.0 && !self.is_floated() {
+                self.layout.effective_margin.top.max(self.layout.effective_margin.bottom)
             } else {
                 self.layout.margin_box.height.max(0.0)
             }
         } else {
             0.0
         };
-        self.layout.block_extent = self.layout.block_extent.max(
-            self.layout.margin_box.y + self.layout.margin_box.height
-        );
-        self.layout.carried_margin = if self.is_in_flow() {
-            margin_carrier.max(if self.layout.content_box.height == 0.0 && !self.is_floated() {
-                self.layout.margin.bottom.max(self.layout.margin.top)
-            } else {
-                self.layout.margin.bottom
-            })
-        } else {
-            0.0
-        };
+        // println!("computed block_size: {}",self.layout.block_size);
+
+
+        // ==JUFIX:4==
+        // NOTICE: this is NOT a good fix, still need to consider the margin collapsing
+        if self.style.position == Positioned::Absolute {
+            self.layout.block_extent = 0.0f32;
+        }
+        else {
+            // ==JUFIX== QuickFix
+            if self.style.position == Positioned::Relative {
+                if let Some(rel_top) = self.style.top {
+                    self.layout.block_extent = self.layout.block_extent.max(
+                        // self.layout.margin_box.y + self.layout.margin_box.height
+                        self.layout.border_box.y + self.layout.border_box.height
+                    ) - rel_top;
+                }
+                else {
+                    self.layout.block_extent = self.layout.block_extent.max(
+                        // self.layout.margin_box.y + self.layout.margin_box.height
+                        self.layout.border_box.y + self.layout.border_box.height
+                    );
+                }
+            }
+            else {
+                self.layout.block_extent = self.layout.block_extent.max(
+                    // self.layout.margin_box.y + self.layout.margin_box.height
+                    self.layout.border_box.y + self.layout.border_box.height
+                );
+            }
+            
+        }
+        // self.layout.block_extent = self.layout.block_extent.max(
+        //     self.layout.margin_box.y + self.layout.margin_box.height
+        // );
 
         self.layout.float_cursor = match self.style.float {
             Floated::Left => Lazy::new(self.layout.float_cursor.insert_left(&self.layout.margin_box)),
             Floated::Right => Lazy::new(self.layout.float_cursor.insert_right(&self.layout.margin_box)),
+            Floated::None if self.class==LayoutClass::InlineBlock => Lazy::new(self.layout.float_cursor.insert_left_lh(&self.layout.margin_box,5.6f32)),
             Floated::None => self.layout.float_cursor.clone(),
         };
+
+        // println!("computed float cursor left block end: {}",self.layout.float_cursor.left_block_end);
     }
 
     /// Calculate the width of a block-level non-replaced element in normal flow.
@@ -806,6 +1181,13 @@ impl<'a> LayoutNode<'a> {
     ///
     /// Sets the horizontal margin/padding/border dimensions, and the `width`.
     fn calculate_block_width(&mut self) {
+
+        // println!("====");
+        // println!("self.style.width.is_auto: {}", self.style.width.is_auto());
+        // println!("self.style.margin.left.is_auto: {}", self.style.margin.left.is_auto());
+        // println!("self.style.margin.right.is_auto: {}", self.style.margin.right.is_auto());
+        // println!("====");
+        
         // Adjust used values to balance this difference, by increasing the total width by exactly
         // `underflow` pixels.
         self.layout.underflow = self.layout.containing_box.width - [
@@ -816,10 +1198,30 @@ impl<'a> LayoutNode<'a> {
         ].iter().sum::<f32>();
 
         self.layout.content_box.width = if self.style.width.is_auto() {
-            self.layout.underflow.max(0.0)
+            if self.style.position == Positioned::Fixed {
+                0.0
+            }
+            else {
+                self.layout.underflow.max(0.0)
+            }
         } else {
             self.style.width.value()
         };
+        
+        // Adjust used values to balance this difference, by increasing the total width by exactly
+        // `underflow` pixels.
+        // self.layout.underflow = self.layout.containing_box.width - [
+        //     self.style.margin.left.value(), self.style.margin.right.value(),
+        //     self.style.border.left, self.style.border.right,
+        //     self.style.padding.left, self.style.padding.right,
+        //     self.style.width.value(),
+        // ].iter().sum::<f32>();
+
+        // self.layout.content_box.width = if self.style.width.is_auto() {
+        //     self.layout.underflow.max(0.0)
+        // } else {
+        //     self.style.width.value()
+        // };
 
         self.layout.margin.left = if self.style.margin.left.is_auto() {
             if self.style.width.is_auto() || self.layout.underflow < 0.0 {
@@ -852,13 +1254,10 @@ impl<'a> LayoutNode<'a> {
 
     /// Lay out a floating element and its descendants.
     fn layout_float(&mut self) {
+        // println!("====");
+        println!("call layout_float");
         self.layout.padding = self.style.padding;
         self.layout.border = self.style.border;
-
-        self.layout.margin.left = self.style.margin.left.value();
-        self.layout.margin.right = self.style.margin.right.value();
-        self.layout.margin.top = self.style.margin.top.value();
-        self.layout.margin.bottom = self.style.margin.bottom.value();
 
         if self.style.clear.left {
             self.layout.block_pos = self.layout.block_pos.max(
@@ -878,8 +1277,10 @@ impl<'a> LayoutNode<'a> {
             - self.layout.padding.right
             - self.layout.border.left
             - self.layout.border.right
-            - self.layout.margin.left
-            - self.layout.margin.right
+            - self.layout.effective_margin.left
+            - self.layout.effective_margin.right
+            // - self.layout.margin.left
+            // - self.layout.margin.right
         } else {
             self.style.width.value()
         };
@@ -893,8 +1294,10 @@ impl<'a> LayoutNode<'a> {
             + self.layout.padding.right
             + self.layout.border.left
             + self.layout.border.right
-            + self.layout.margin.left
-            + self.layout.margin.right;
+            + self.layout.effective_margin.left
+            + self.layout.effective_margin.right;
+            // + self.layout.margin.left
+            // + self.layout.margin.right;
         let (inline, block) = if self.is_floated_left() {
             self.layout.float_cursor.place_left(&available, outer_width)
         } else /* self.is_floated_right() */ {
@@ -905,16 +1308,42 @@ impl<'a> LayoutNode<'a> {
             inline
             + self.layout.padding.left
             + self.layout.border.left
-            + self.layout.margin.left;
+            + self.layout.effective_margin.left;
+            // + self.layout.margin.left;
         self.layout.content_box.y =
             block
             + self.layout.padding.top
             + self.layout.border.top
-            + self.layout.margin.top;
+            + self.layout.effective_margin.top;
+            // + self.layout.margin.top;
+
+        // println!("available.x: {}",available.x);
+        // println!("available.y: {}",available.y);
+        // println!("available.width: {}",available.width);
+        // println!("available.height: {}",available.height);
+        // println!("float self.layout.content_box.width: {}",self.layout.content_box.width);
+        // println!("outer_width: {}",outer_width);
+        // println!("======");
+        // println!("self.layout.containing_box.x: {}",self.layout.containing_box.x);
+        // println!("======");
+        // println!("float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("available.width: {}",available.width);
+        // println!("available.height: {}",available.height);
+        // println!("outer_width: {}",outer_width);
+        // println!("computed inline: {}",inline);
+        // println!("computed block: {}",block);
+        // println!("======");
+        // println!("float left: {}",self.is_floated_left());
+        // println!("float right: {}",self.is_floated_right());
+        // println!("float self.layout.content_box.x: {}",self.layout.content_box.x);
+        
+        // println!("float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("float cursor right: {}",self.layout.float_cursor.right_block_end);
 
         // Recursively lay out the children of this box.
         let inline_cursor = self.layout.content_box.x;
         let mut block_cursor = self.layout.content_box.y;
+        let mut inner_float_cursor = FloatCursor::empty();
         for child in &mut self.children {
             // Give the child box the boundaries of its container.
             child.layout.containing_box = self.layout.content_box;
@@ -925,14 +1354,16 @@ impl<'a> LayoutNode<'a> {
             };
             child.layout.block_pos = block_cursor;
             child.layout.inline_pos = inline_cursor;
-            child.layout.float_cursor = FloatCursor::empty();
+            // child.layout.float_cursor = FloatCursor::empty();
+            child.layout.float_cursor = inner_float_cursor.clone();
             // Lay out the child box.
             child.layout();
             // Increment the cursor so each child is laid out below the previous one.
             block_cursor += child.layout.block_size;
 
             self.layout.block_extent = self.layout.block_extent.max(child.layout.block_extent);
-            self.layout.float_cursor = child.layout.float_cursor.clone();
+            inner_float_cursor = child.layout.float_cursor.clone();
+            // self.layout.float_cursor = child.layout.float_cursor.clone();
         }
 
         // Parent height can depend on child height, so `calculate_height` must be called after the
@@ -946,10 +1377,13 @@ impl<'a> LayoutNode<'a> {
         } else {
             self.style.height.value()
         };
+        // println!("float self.layout.content_box.height: {}",self.layout.content_box.height);
 
         self.layout.padding_box = self.layout.content_box.extend_by(&self.layout.padding);
         self.layout.border_box = self.layout.padding_box.extend_by(&self.layout.border);
         self.layout.margin_box = self.layout.border_box.extend_by(&self.layout.margin);
+        // println!("computed self.layout.content_box.y: {}",self.layout.content_box.y);
+        // println!("computed self.layout.border_box.y: {}",self.layout.border_box.y);
 
         // XXX: Use border box or margin box?
         self.layout.block_size = 0.0;
@@ -961,11 +1395,33 @@ impl<'a> LayoutNode<'a> {
             }
         );
 
+        // match self.style.float {
+        //     Floated::Left if self.layout.border_box.height>0.0 => println!("b1"),
+        //     Floated::Right if self.layout.border_box.height>0.0 => println!("b2"),
+        //     Floated::None => println!("b3"),
+        //     _ => println!("b4"),
+        // };
+        // println!("margin box x:{}, y:{}, width:{}, height:{}",self.layout.margin_box.x, self.layout.margin_box.y, self.layout.margin_box.width, self.layout.margin_box.height);
+        // println!("(bf) fl float cursor left: {}",self.layout.float_cursor.left_block_end);
         self.layout.float_cursor = match self.style.float {
-            Floated::Left => Lazy::new(self.layout.float_cursor.insert_left(&self.layout.margin_box)),
-            Floated::Right => Lazy::new(self.layout.float_cursor.insert_right(&self.layout.margin_box)),
+            Floated::Left if self.layout.border_box.height>0.0 => Lazy::new(self.layout.float_cursor.insert_left(&self.layout.margin_box)),
+            Floated::Right if self.layout.border_box.height>0.0 => Lazy::new(self.layout.float_cursor.insert_right(&self.layout.margin_box)),
             Floated::None => self.layout.float_cursor.clone(),
+            _ => self.layout.float_cursor.clone(),
         };
+
+
+        // println!("(af) fl float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("(af) self.layout.border_box.width: {}",self.layout.border_box.width);
+        // println!("======");
+
+        // println!("final self.layout.content_box.x: {}",self.layout.content_box.x);
+        self.layout.inline_size = self.layout.border_box.width;
+        // println!("final self.layout.inline_size: {}",self.layout.inline_size);
+
+        // println!("float cursor left: {}",self.layout.float_cursor.left_block_end);
+        // println!("float cursor right: {}",self.layout.float_cursor.right_block_end);
+        // println!("====");
     }
 
     fn render(&self, list: &mut DisplayList) {

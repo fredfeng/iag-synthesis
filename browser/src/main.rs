@@ -38,7 +38,7 @@ const CASSIUS_WRITE_ERR: &str = "Error writing Cassius output.";
 const CASSIUS_PROBLEM: &str = "
 
 (define-problem doc-2
-  :sheets default doc-1
+  :sheets firefox doc-1
   :fonts doc-1
   :documents doc-1
   :layouts doc-2)
@@ -49,6 +49,7 @@ fn command_options() -> getopts::Options {
     let mut opts = getopts::Options::new();
     opts.optopt("t", "test", "Use inputs for named testcase", "BASENAME");
     opts.optopt("b", "bench", "Use inputs for named benchmark", "BASENAME");
+    opts.optopt("e", "easy", "Use inputs for named easycase", "BASENAME");
     opts.optopt("d", "html", "HTML document", "FILENAME");
     opts.optopt("s", "css", "CSS stylesheet", "FILENAME");
     opts.optopt("o", "out", "PNG viewport", "PATH");
@@ -74,6 +75,9 @@ fn path_to_file(args: &getopts::Matches, ext: &str) -> PathBuf {
     } else if let Some(testcase) = args.opt_str("test") {
         path.push("sanity");
         path.push(testcase);
+    } else if let Some(easycase) = args.opt_str("easy") {
+        path.push("easy");
+        path.push(easycase);
     } else { // The default case
         path.push("test");
     }

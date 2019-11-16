@@ -9,6 +9,7 @@ div
     height: 32px;
     margin-top: 32px;
     overflow: scroll;
+    background: blue;
 }
 #div2
 {

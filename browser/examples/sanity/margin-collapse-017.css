@@ -1,6 +1,7 @@
 #div1
 {
     border-bottom: solid;
+    border-bottom-width: 3px;
 }
 #div2, #div3
 {

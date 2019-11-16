@@ -1,25 +1,20 @@
-;; From file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/chrome591243.html
+;; From file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/chrome591243.html
 
 (define-stylesheet doc-1
   ((tag body)
    [width (px 100)]
-   #;[border-top-color red]
-   [border-top-style solid]
    [border-top-width (px 3)]
-   #;[border-right-color red]
-   [border-right-style solid]
    [border-right-width (px 3)]
-   #;[border-bottom-color red]
-   [border-bottom-style solid]
    [border-bottom-width (px 3)]
-   #;[border-left-color red]
-   [border-left-style solid]
    [border-left-width (px 3)]
-   #;[border-image-outset 0]
-   #;[border-image-repeat stretch]
-   #;[border-image-slice (% 100)]
-   #;[border-image-source none]
-   #;[border-image-width 1])
+   [border-top-style solid]
+   [border-right-style solid]
+   [border-bottom-style solid]
+   [border-left-style solid]
+   #;[border-top-color red]
+   #;[border-right-color red]
+   #;[border-bottom-color red]
+   #;[border-left-color red])
   ((id div-first-child)
    [float right]
    [height (px 30)]
@@ -46,9 +41,8 @@
    [overflow-y hidden]
    [clear both])
   ((id em-after)
-   [margin-top (px -30)]
-   [line-height (px 0)])
-  ((class div-child)
+   [margin-top (px -30)])
+  ((id div-child)
    [display inline-block]
    [width (px 50)]
    [height (px 30)]
@@ -64,19 +58,19 @@
 
 (define-fonts doc-1
   [16 "serif" 400 normal 12 4 0 0 19.2]
-  [16 "serif" 400 italic 12 3 0.5 0.5 19.2])
+  [16 "serif" 400 italic 11 4 0.5 0.5 19.2])
 
-(define-layout (doc-1 :matched true :w 1280 :h 703 :fs 16 :scrollw 0)
+(define-layout (doc-1 :matched true :w 1280 :h 663 :fs 16 :scrollw 0)
  ([VIEW :w 1280]
-  ([BLOCK :x 0 :y 0 :w 1280 :h 82 :elt 0]
-   ([BLOCK :x 8 :y 8 :w 106 :h 66 :elt 3]
-    ([BLOCK :x 81 :y 11 :w 30 :h 30 :elt 4])
-    ([BLOCK :x 11 :y 41 :w 100 :h 0 :elt 5])
-    ([BLOCK :x 11 :y 11 :w 100 :h 60 :elt 6]
-     ([LINE]
-      ([INLINE :x 11 :y 11 :w 50 :h 30 :elt 7]))
-     ([LINE]
-      ([INLINE :x 11 :y 41 :w 50 :h 30 :elt 8])))))))
+  ([BLOCK :x 0 :y 0 :w 1280 :h 27 :elt 0]
+   ([BLOCK :x 8 :y 8 :w 106 :h 6 :elt 3]
+    ([BLOCK :x 11 :y 11 :w 16 :h 0 :elt 4])
+    ([BLOCK :x 11 :y 11 :w 16 :h 16 :elt 5])
+    ([BLOCK :x 11 :y -3 :w 100 :h 0 :elt 6]
+     ([BLOCK :x 81 :y -3 :w 30 :h 30 :elt 7])
+     ([ANON]
+      ([LINE]
+       ([INLINE :elt 8]))))))))
 
 (define-document doc-1
   ([html :num 0]
@@ -86,15 +80,15 @@
     ([span :num 4 :id em-before])
     ([em :num 5])
     ([div :num 6 :id em-after]
-     ([span :num 7 :id div-first-child :class (div-child)])
-     ([span :num 8 :class (div-child)])))))
+     ([span :num 7 :id div-first-child :class (div-child)]) " "
+     ([span :num 8 :class (div-child)])) " ")))
 
 (define-problem doc-1
   :title ""
-  :url "file:///Users/yufeng/research/other/iag-synthesis/browser/examples/bug/chrome591243.html"
+  :url "file:///Users/joseph/Desktop/UCSB/19fall/layout/iag-synthesis/browser/examples/bug/chrome591243.html"
   :sheets firefox doc-1
   :fonts doc-1
   :documents doc-1
   :layouts doc-1
-  :features css:float unknown-selector css:clear css:before-after css:overflow-x css:overflow-y display:inline-block float:1)
+  :features css:float css:clear css:overflow-x css:overflow-y empty-text float:1)
 
